@@ -10,6 +10,7 @@ import json
 import openpyxl
 import subprocess
 import sys
+import re
 
 from chord_config_manager import ChordConfigManager
 
@@ -105,6 +106,21 @@ class ChordConfigTab(QWidget):
 
         layout.addLayout(chords_row_layout)
 
+        # ИНФОРМАЦИЯ О ВЫБРАННОМ АККОРДЕ
+        self.chord_info_label = QLabel("Выберите аккорд для отображения информации")
+        self.chord_info_label.setStyleSheet("""
+            QLabel {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                padding: 8px;
+                border-radius: 4px;
+                font-size: 12px;
+            }
+        """)
+        self.chord_info_label.setAlignment(Qt.AlignCenter)
+        self.chord_info_label.setFixedHeight(40)
+        layout.addWidget(self.chord_info_label)
+
         # Область для изображения с прокруткой
         self.image_scroll = QScrollArea()
         self.image_scroll.setWidgetResizable(True)
@@ -116,7 +132,107 @@ class ChordConfigTab(QWidget):
         self.image_scroll.setWidget(self.image_label)
         layout.addWidget(self.image_scroll, 1)  # Растягиваем область с изображением
 
-    # Все остальные методы остаются без изменений
+    def update_chord_info(self, chord_info):
+        """Обновление информации о выбранном аккорде"""
+        try:
+            if chord_info and 'data' in chord_info:
+                data = chord_info['data']
+                chord = data.get('CHORD', 'Не указан')
+                caption = data.get('CAPTION', 'Не указано')
+                chord_type = data.get('TYPE', 'Не указан')
+                variant = data.get('VARIANT', '1')
+
+                # Формируем текст информации
+                info_text = f"<b>Аккорд:</b> {chord} | <b>Название:</b> {caption} | <b>Тип:</b> {chord_type} | <b>Вариант:</b> {variant}"
+                self.chord_info_label.setText(info_text)
+            else:
+                self.chord_info_label.setText("Информация об аккорде недоступна")
+        except Exception as e:
+            print(f"Ошибка при обновлении информации об аккорде: {e}")
+            self.chord_info_label.setText("Ошибка загрузки информации")
+
+    def get_variant_number(self, chord_name, variant):
+        """Получение номера варианта для отображения на кнопке"""
+        try:
+            # Сначала пробуем получить из поля VARIANT
+            if variant and str(variant).isdigit():
+                return str(variant)
+
+            # Если вариант не указан, пытаемся извлечь из имени аккорда
+            # Например: "A1" -> "1", "Am2" -> "2"
+            if chord_name:
+                match = re.search(r'(\d+)$', str(chord_name))
+                if match:
+                    return match.group(1)
+
+            # Если ничего не нашли, возвращаем "1" по умолчанию
+            return "1"
+        except Exception as e:
+            print(f"Ошибка в get_variant_number: {e}")
+            return "1"
+
+    def load_chord_buttons(self):
+        """Загрузка кнопок аккордов для текущей группы"""
+        try:
+            # Очищаем layout
+            for i in reversed(range(self.chords_layout.count())):
+                widget = self.chords_layout.itemAt(i).widget()
+                if widget:
+                    widget.setParent(None)
+
+            # Получаем аккорды для текущей группы
+            self.current_chords = self.config_manager.get_chords_by_group(self.current_group)
+
+            if not self.current_chords:
+                label = QLabel("Аккорды не найдены")
+                self.chords_layout.addWidget(label)
+                return
+
+            # Создаем кнопки - все в одну строку
+            for chord_info in self.current_chords:
+                try:
+                    chord_data = chord_info.get('data', {})
+                    chord_name = chord_info.get('name', '')
+                    variant = chord_data.get('VARIANT', '')
+
+                    # Определяем текст для кнопки - только номер варианта
+                    button_text = self.get_variant_number(chord_name, variant)
+
+                    btn = QPushButton(button_text)
+                    btn.setFixedSize(40, 30)  # Еще меньше, так как только цифры
+                    btn.setStyleSheet("""
+                        QPushButton {
+                            font-size: 10px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #e0e0e0;
+                        }
+                    """)
+
+                    # Добавляем всплывающую подсказку с полным названием
+                    full_name = f"{chord_data.get('CHORD', '')}{variant}"
+                    caption = chord_data.get('CAPTION', '')
+                    tooltip = f"{full_name} - {caption}" if caption else full_name
+                    btn.setToolTip(tooltip)
+
+                    btn.clicked.connect(lambda checked, c=chord_info: self.on_chord_clicked(c))
+                    self.chords_layout.addWidget(btn)
+                except Exception as e:
+                    print(f"Ошибка при создании кнопки аккорда: {e}")
+                    continue
+
+            # АВТОМАТИЧЕСКИ ЗАГРУЖАЕМ ПЕРВЫЙ АККОРД ГРУППЫ
+            if self.current_chords:
+                self.current_chord = self.current_chords[0]
+                self.display_chord(self.current_chord)
+                self.update_chord_info(self.current_chord)
+
+        except Exception as e:
+            print(f"Ошибка при загрузке кнопок аккордов: {e}")
+            label = QLabel("Ошибка загрузки аккордов")
+            self.chords_layout.addWidget(label)
+
     def save_chord_configuration(self):
         """Сохранение конфигурации всех аккордов в JSON файл"""
         try:
@@ -252,30 +368,37 @@ class ChordConfigTab(QWidget):
 
     def load_configuration(self):
         """Загрузка конфигурации"""
-        if self.config_manager.load_config_data():
-            # Загружаем оригинальное изображение
-            if os.path.exists(self.config_manager.image_path):
-                self.original_pixmap = QPixmap(self.config_manager.image_path)
-                if not self.original_pixmap.isNull():
-                    # Показываем оригинальное изображение при запуске
-                    self.display_original_image()
+        try:
+            if self.config_manager.load_config_data():
+                # Загружаем оригинальное изображение
+                if os.path.exists(self.config_manager.image_path):
+                    self.original_pixmap = QPixmap(self.config_manager.image_path)
+                    if not self.original_pixmap.isNull():
+                        # Показываем оригинальное изображение при запуске
+                        self.display_original_image()
+                    else:
+                        self.image_label.setText("Ошибка загрузки изображения")
                 else:
-                    self.image_label.setText("Ошибка загрузки изображения")
-            else:
-                self.image_label.setText(f"Изображение не найдено: {self.config_manager.image_path}")
+                    self.image_label.setText(f"Изображение не найдено: {self.config_manager.image_path}")
 
-            # Заполняем комбобокс групп
-            groups = self.config_manager.get_chord_groups()
-            self.group_combo.clear()
-            self.group_combo.addItems(groups)
+                # Заполняем комбобокс групп
+                groups = self.config_manager.get_chord_groups()
+                self.group_combo.clear()
+                self.group_combo.addItems(groups)
 
-            if groups:
-                self.current_group = groups[0]
-                self.load_chord_buttons()
+                if groups:
+                    self.current_group = groups[0]
+                    self.load_chord_buttons()
+                else:
+                    self.image_label.setText("Группы аккордов не найдены")
             else:
-                self.image_label.setText("Группы аккордов не найдены")
-        else:
-            self.image_label.setText("Ошибка загрузки конфигурации. Проверьте файлы в папке templates2")
+                self.image_label.setText("Ошибка загрузки конфигурации. Проверьте файлы в папке templates2")
+        except Exception as e:
+            error_msg = f"Ошибка при загрузке конфигурации: {str(e)}"
+            self.image_label.setText(error_msg)
+            print(f"❌ {error_msg}")
+            import traceback
+            traceback.print_exc()
 
     def refresh_configuration(self):
         """Обновление конфигурации из Excel файла"""
@@ -309,7 +432,6 @@ class ChordConfigTab(QWidget):
                     self.load_chord_buttons()
 
                     # Пытаемся восстановить предыдущий аккорд
-
                     if current_chord:
                         chord_names = [chord['name'] for chord in self.current_chords]
                         if current_chord['name'] in chord_names:
@@ -317,14 +439,17 @@ class ChordConfigTab(QWidget):
                             index = chord_names.index(current_chord['name'])
                             self.current_chord = self.current_chords[index]
                             self.display_chord(self.current_chord)
+                            self.update_chord_info(self.current_chord)
                         else:
                             # Показываем первый аккорд группы
                             self.current_chord = self.current_chords[0]
                             self.display_chord(self.current_chord)
+                            self.update_chord_info(self.current_chord)
                     else:
                         # Показываем первый аккорд группы
                         self.current_chord = self.current_chords[0]
                         self.display_chord(self.current_chord)
+                        self.update_chord_info(self.current_chord)
                 else:
                     self.image_label.setText("Группы аккордов не найдены после обновления")
 
@@ -466,35 +591,6 @@ class ChordConfigTab(QWidget):
             print(
                 f"📏 Оригинальное изображение: {self.original_pixmap.width()}x{self.original_pixmap.height()} -> {scaled_pixmap.width()}x{scaled_pixmap.height()}")
 
-    def load_chord_buttons(self):
-        """Загрузка кнопок аккордов для текущей группы"""
-        # Очищаем layout
-        for i in reversed(range(self.chords_layout.count())):
-            widget = self.chords_layout.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
-
-        # Получаем аккорды для текущей группы
-        self.current_chords = self.config_manager.get_chords_by_group(self.current_group)
-
-        if not self.current_chords:
-            label = QLabel("Аккорды не найдены")
-            self.chords_layout.addWidget(label)
-            return
-
-        # Создаем кнопки - все в одну строку
-        for chord_info in self.current_chords:
-            btn = QPushButton(chord_info['name'])
-            btn.setFixedSize(50, 30)  # Фиксированный маленький размер
-            btn.setStyleSheet("font-size: 10px;")  # Маленький шрифт
-            btn.clicked.connect(lambda checked, c=chord_info: self.on_chord_clicked(c))
-            self.chords_layout.addWidget(btn)
-
-        # АВТОМАТИЧЕСКИ ЗАГРУЖАЕМ ПЕРВЫЙ АККОРД ГРУППЫ
-        if self.current_chords:
-            self.current_chord = self.current_chords[0]
-            self.display_chord(self.current_chord)
-
     def on_scale_changed(self, scale_type):
         """Обработчик изменения масштаба"""
         if scale_type == "Маленький 1":
@@ -562,8 +658,10 @@ class ChordConfigTab(QWidget):
         if self.current_chords:
             self.current_chord = self.current_chords[0]
             self.display_chord(self.current_chord)
+            self.update_chord_info(self.current_chord)
         else:
             self.current_chord = None
+            self.chord_info_label.setText("Аккорды не найдены")
             if self.original_pixmap:
                 self.display_original_image()
             else:
@@ -573,6 +671,7 @@ class ChordConfigTab(QWidget):
         """Обработчик клика по кнопке аккорда"""
         self.current_chord = chord_info
         self.display_chord(chord_info)
+        self.update_chord_info(chord_info)
 
     def display_chord(self, chord_info):
         """Отображение выбранного аккорда на изображении с выбранным масштабом"""
