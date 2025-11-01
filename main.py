@@ -2,8 +2,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QComboBox, QLabel, QScrollArea, QGridLayout,
                              QGroupBox, QMessageBox, QSizePolicy, QFileDialog, QMainWindow, QApplication, QToolBar,
                              QAction)
-from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QPixmap, QPainter
+from PyQt5.QtCore import Qt, QSize, QRectF
+from PyQt5.QtGui import QPixmap, QPainter, QPen, QBrush, QColor
 import os
 import pandas as pd
 import json
@@ -132,6 +132,88 @@ class ChordConfigTab(QWidget):
         self.image_scroll.setWidget(self.image_label)
         layout.addWidget(self.image_scroll, 1)  # Растягиваем область с изображением
 
+    def on_scale_changed(self, scale_type):
+        """Обработчик изменения масштаба"""
+        if scale_type == "Маленький 1":
+            self.current_scale_type = "small1"
+        elif scale_type == "Маленький 2":
+            self.current_scale_type = "small2"
+        elif scale_type == "Средний 1":
+            self.current_scale_type = "medium1"
+        elif scale_type == "Средний 2":
+            self.current_scale_type = "medium2"
+        else:
+            self.current_scale_type = "original"
+
+        if self.current_chord:
+            self.display_chord(self.current_chord)
+        elif self.original_pixmap:
+            self.display_original_image()
+
+    def on_display_type_changed(self, display_type):
+        """Обработчик изменения типа отображения"""
+        self.current_display_type = "fingers" if display_type == "Пальцы" else "notes"
+        if self.current_chord:
+            self.display_chord(self.current_chord)
+
+    def on_fret_type_changed(self, fret_type):
+        """Обработчик изменения типа отображения ладов"""
+        self.current_fret_type = "roman" if fret_type == "Римские" else "numeric"
+        if self.current_chord:
+            self.display_chord(self.current_chord)
+
+    def on_barre_outline_changed(self, outline_type):
+        """Обработчик изменения обводки барре"""
+        if outline_type == "Без обводки":
+            self.current_barre_outline = "none"
+        elif outline_type == "Тонкая":
+            self.current_barre_outline = "thin"
+        elif outline_type == "Средняя":
+            self.current_barre_outline = "medium"
+        else:  # "Толстая"
+            self.current_barre_outline = "thick"
+
+        if self.current_chord:
+            self.display_chord(self.current_chord)
+
+    def on_note_outline_changed(self, outline_type):
+        """Обработчик изменения обводки нот"""
+        if outline_type == "Без обводки":
+            self.current_note_outline = "none"
+        elif outline_type == "Тонкая":
+            self.current_note_outline = "thin"
+        elif outline_type == "Средняя":
+            self.current_note_outline = "medium"
+        else:  # "Толстая"
+            self.current_note_outline = "thick"
+
+        if self.current_chord:
+            self.display_chord(self.current_chord)
+
+    def on_group_changed(self, group):
+        """Обработчик изменения группы аккордов"""
+        self.current_group = group
+        self.load_chord_buttons()
+
+        # АВТОМАТИЧЕСКИ ЗАГРУЖАЕМ ПЕРВЫЙ АККОРД НОВОЙ ГРУППЫ
+        if self.current_chords:
+            self.current_chord = self.current_chords[0]
+            self.display_chord(self.current_chord)
+            self.update_chord_info(self.current_chord)
+        else:
+            self.current_chord = None
+            self.chord_info_label.setText("Аккорды не найдены")
+            if self.original_pixmap:
+                self.display_original_image()
+            else:
+                self.image_label.setText("Аккорды не найдены")
+
+    def on_chord_clicked(self, chord_info):
+        """Обработчик клика по кнопке аккорда"""
+        self.current_chord = chord_info
+        self.display_chord(chord_info)
+        self.update_chord_info(chord_info)
+
     def update_chord_info(self, chord_info):
         """Обновление информации о выбранном аккорде"""
         try:
@@ -233,139 +315,6 @@ class ChordConfigTab(QWidget):
             label = QLabel("Ошибка загрузки аккордов")
             self.chords_layout.addWidget(label)
 
-    def save_chord_configuration(self):
-        """Сохранение конфигурации всех аккордов в JSON файл"""
-        try:
-            if not self.config_manager.chord_data:
-                QMessageBox.warning(self, "Ошибка", "Нет данных аккордов для сохранения")
-                return
-
-            # Запрашиваем путь для сохранения
-            file_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Сохранить конфигурацию аккордов",
-                "chords_configuration.json",
-                "JSON Files (*.json)"
-            )
-
-            if not file_path:
-                return
-
-            print("💾 Сохранение конфигурации аккордов...")
-
-            # Создаем структуру для сохранения
-            config_data = {
-                "metadata": {
-                    "image_file": os.path.basename(self.config_manager.image_path),
-                    "total_chords": len(self.config_manager.chord_data),
-                    "outline_settings": {
-                        "barre_outline": self.current_barre_outline,
-                        "note_outline": self.current_note_outline,
-                        "scale_type": "original"  # Всегда оригинальный масштаб
-                    },
-                    "created_date": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-                },
-                "chords": {}
-            }
-
-            # Получаем данные из таблицы CHORDS для каждого аккорда
-            chords_info = {}
-            for chord in self.config_manager.chord_data:
-                chord_name = chord.get('CHORD', '')
-                variant = chord.get('VARIANT', '')
-                caption = chord.get('CAPTION', '')
-                chord_type = chord.get('TYPE', '')
-
-                if chord_name:
-                    full_name = f"{chord_name}{variant}" if variant else chord_name
-                    chords_info[full_name] = {
-                        "base_chord": chord_name,
-                        "variant": variant,
-                        "caption": caption,
-                        "type": chord_type,
-                        "ram": chord.get('RAM'),
-                        "bar": chord.get('BAR'),
-                        "fnl": chord.get('FNL'),
-                        "fn": chord.get('FN'),
-                        "fpol": chord.get('FPOL'),
-                        "fpxl": chord.get('FPXL'),
-                        "fp1": chord.get('FP1'),
-                        "fp2": chord.get('FP2'),
-                        "fp3": chord.get('FP3'),
-                        "fp4": chord.get('FP4')
-                    }
-
-            # Добавляем информацию о группах
-            config_data["groups"] = self.config_manager.get_chord_groups()
-
-            # Собираем полную конфигурацию для каждого аккорда
-            total_saved = 0
-            for group in config_data["groups"]:
-                chords_in_group = self.config_manager.get_chords_by_group(group)
-                for chord_info in chords_in_group:
-                    chord_name = chord_info['name']
-
-                    # Получаем элементы для обоих типов отображения
-                    elements_fingers = self.config_manager.get_chord_elements(
-                        chord_info['data'], "fingers"
-                    )
-                    elements_notes = self.config_manager.get_chord_elements(
-                        chord_info['data'], "notes"
-                    )
-
-                    # Получаем область обрезки
-                    ram_key = chord_info['data'].get('RAM')
-                    crop_rect = self.config_manager.get_ram_crop_area(ram_key)
-
-                    # Сохраняем конфигурацию аккорда
-                    config_data["chords"][chord_name] = {
-                        "group": group,
-                        "base_info": chords_info.get(chord_name, {}),
-                        "crop_rect": crop_rect,
-                        "elements_fingers": self._serialize_elements(elements_fingers),
-                        "elements_notes": self._serialize_elements(elements_notes),
-                        "display_settings": {
-                            "fret_type": self.current_fret_type,
-                            "barre_outline": self.current_barre_outline,
-                            "note_outline": self.current_note_outline
-                        }
-                    }
-                    total_saved += 1
-
-            # Сохраняем в файл
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, indent=2, ensure_ascii=False)
-
-            QMessageBox.information(
-                self,
-                "Успех",
-                f"Конфигурация сохранена!\n"
-                f"Аккордов: {total_saved}\n"
-                f"Файл: {os.path.basename(file_path)}"
-            )
-            print(f"✅ Конфигурация сохранена: {total_saved} аккордов")
-
-        except Exception as e:
-            error_msg = f"Ошибка при сохранении конфигурации: {str(e)}"
-            QMessageBox.critical(self, "Ошибка", error_msg)
-            print(f"❌ {error_msg}")
-            import traceback
-            traceback.print_exc()
-
-    def _serialize_elements(self, elements):
-        """Сериализация элементов для сохранения в JSON"""
-        serialized = []
-        for element in elements:
-            element_data = {
-                "type": element['type'],
-                "data": element['data'].copy()
-            }
-            # Убираем временные поля
-            if '_key' in element_data['data']:
-                del element_data['data']['_key']
-            serialized.append(element_data)
-        return serialized
-
     def load_configuration(self):
         """Загрузка конфигурации"""
         try:
@@ -399,6 +348,20 @@ class ChordConfigTab(QWidget):
             print(f"❌ {error_msg}")
             import traceback
             traceback.print_exc()
+
+    def display_original_image(self):
+        """Отображение оригинального изображения при запуске с масштабированием"""
+        if self.original_pixmap and not self.original_pixmap.isNull():
+            # Масштабируем изображение для отображения (оригинальный размер)
+            scaled_pixmap = self.original_pixmap.scaled(
+                self.image_label.width(),
+                self.image_label.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+            print(
+                f"📏 Оригинальное изображение: {self.original_pixmap.width()}x{self.original_pixmap.height()} -> {scaled_pixmap.width()}x{scaled_pixmap.height()}")
 
     def refresh_configuration(self):
         """Обновление конфигурации из Excel файла"""
@@ -577,101 +540,321 @@ class ChordConfigTab(QWidget):
             print(f"Ошибка: {e}")
             return False
 
-    def display_original_image(self):
-        """Отображение оригинального изображения при запуске с масштабированием"""
-        if self.original_pixmap and not self.original_pixmap.isNull():
-            # Масштабируем изображение для отображения (оригинальный размер)
-            scaled_pixmap = self.original_pixmap.scaled(
-                self.image_label.width(),
-                self.image_label.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+    def save_chord_configuration(self):
+        """Сохранение конфигурации всех аккордов в JSON файл"""
+        try:
+            if not self.config_manager.chord_data:
+                QMessageBox.warning(self, "Ошибка", "Нет данных аккордов для сохранения")
+                return
+
+            # Запрашиваем путь для сохранения
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Сохранить конфигурацию аккордов",
+                "chords_configuration.json",
+                "JSON Files (*.json)"
             )
-            self.image_label.setPixmap(scaled_pixmap)
-            print(
-                f"📏 Оригинальное изображение: {self.original_pixmap.width()}x{self.original_pixmap.height()} -> {scaled_pixmap.width()}x{scaled_pixmap.height()}")
 
-    def on_scale_changed(self, scale_type):
-        """Обработчик изменения масштаба"""
-        if scale_type == "Маленький 1":
-            self.current_scale_type = "small1"
-        elif scale_type == "Маленький 2":
-            self.current_scale_type = "small2"
-        elif scale_type == "Средний 1":
-            self.current_scale_type = "medium1"
-        elif scale_type == "Средний 2":
-            self.current_scale_type = "medium2"
-        else:
-            self.current_scale_type = "original"
+            if not file_path:
+                return
 
-        if self.current_chord:
-            self.display_chord(self.current_chord)
-        elif self.original_pixmap:
-            self.display_original_image()
+            print("💾 Сохранение конфигурации аккордов...")
 
-    def on_display_type_changed(self, display_type):
-        """Обработчик изменения типа отображения"""
-        self.current_display_type = "fingers" if display_type == "Пальцы" else "notes"
-        if self.current_chord:
-            self.display_chord(self.current_chord)
+            # Создаем структуру для сохранения
+            config_data = {
+                "metadata": {
+                    "image_file": os.path.basename(self.config_manager.image_path),
+                    "total_chords": len(self.config_manager.chord_data),
+                    "outline_settings": {
+                        "barre_outline": self.current_barre_outline,
+                        "note_outline": self.current_note_outline,
+                        "scale_type": "original"  # Всегда оригинальный масштаб
+                    },
+                    "created_date": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+                },
+                "chords": {}
+            }
 
-    def on_fret_type_changed(self, fret_type):
-        """Обработчик изменения типа отображения ладов"""
-        self.current_fret_type = "roman" if fret_type == "Римские" else "numeric"
-        if self.current_chord:
-            self.display_chord(self.current_chord)
+            # Получаем данные из таблицы CHORDS для каждого аккорда
+            chords_info = {}
+            for chord in self.config_manager.chord_data:
+                chord_name = chord.get('CHORD', '')
+                variant = chord.get('VARIANT', '')
+                caption = chord.get('CAPTION', '')
+                chord_type = chord.get('TYPE', '')
 
-    def on_barre_outline_changed(self, outline_type):
-        """Обработчик изменения обводки барре"""
-        if outline_type == "Без обводки":
-            self.current_barre_outline = "none"
-        elif outline_type == "Тонкая":
-            self.current_barre_outline = "thin"
-        elif outline_type == "Средняя":
-            self.current_barre_outline = "medium"
-        else:  # "Толстая"
-            self.current_barre_outline = "thick"
+                if chord_name:
+                    full_name = f"{chord_name}{variant}" if variant else chord_name
+                    chords_info[full_name] = {
+                        "base_chord": chord_name,
+                        "variant": variant,
+                        "caption": caption,
+                        "type": chord_type,
+                        "ram": chord.get('RAM'),
+                        "bar": chord.get('BAR'),
+                        "fnl": chord.get('FNL'),
+                        "fn": chord.get('FN'),
+                        "fpol": chord.get('FPOL'),
+                        "fpxl": chord.get('FPXL'),
+                        "fp1": chord.get('FP1'),
+                        "fp2": chord.get('FP2'),
+                        "fp3": chord.get('FP3'),
+                        "fp4": chord.get('FP4')
+                    }
 
-        if self.current_chord:
-            self.display_chord(self.current_chord)
+            # Добавляем информацию о группах
+            config_data["groups"] = self.config_manager.get_chord_groups()
 
-    def on_note_outline_changed(self, outline_type):
-        """Обработчик изменения обводки нот"""
-        if outline_type == "Без обводки":
-            self.current_note_outline = "none"
-        elif outline_type == "Тонкая":
-            self.current_note_outline = "thin"
-        elif outline_type == "Средняя":
-            self.current_note_outline = "medium"
-        else:  # "Толстая"
-            self.current_note_outline = "thick"
+            # Собираем полную конфигурацию для каждого аккорда
+            total_saved = 0
+            for group in config_data["groups"]:
+                chords_in_group = self.config_manager.get_chords_by_group(group)
+                for chord_info in chords_in_group:
+                    chord_name = chord_info['name']
 
-        if self.current_chord:
-            self.display_chord(self.current_chord)
+                    # Получаем элементы для обоих типов отображения
+                    elements_fingers = self.config_manager.get_chord_elements(
+                        chord_info['data'], "fingers"
+                    )
+                    elements_notes = self.config_manager.get_chord_elements(
+                        chord_info['data'], "notes"
+                    )
 
-    def on_group_changed(self, group):
-        """Обработчик изменения группы аккордов"""
-        self.current_group = group
-        self.load_chord_buttons()
+                    # Получаем область обрезки
+                    ram_key = chord_info['data'].get('RAM')
+                    crop_rect = self.config_manager.get_ram_crop_area(ram_key)
 
-        # АВТОМАТИЧЕСКИ ЗАГРУЖАЕМ ПЕРВЫЙ АККОРД НОВОЙ ГРУППЫ
-        if self.current_chords:
-            self.current_chord = self.current_chords[0]
-            self.display_chord(self.current_chord)
-            self.update_chord_info(self.current_chord)
-        else:
-            self.current_chord = None
-            self.chord_info_label.setText("Аккорды не найдены")
-            if self.original_pixmap:
-                self.display_original_image()
+                    # Сохраняем конфигурацию аккорда
+                    config_data["chords"][chord_name] = {
+                        "group": group,
+                        "base_info": chords_info.get(chord_name, {}),
+                        "crop_rect": crop_rect,
+                        "elements_fingers": self._serialize_elements(elements_fingers),
+                        "elements_notes": self._serialize_elements(elements_notes),
+                        "display_settings": {
+                            "fret_type": self.current_fret_type,
+                            "barre_outline": self.current_barre_outline,
+                            "note_outline": self.current_note_outline
+                        }
+                    }
+                    total_saved += 1
+
+            # Сохраняем в файл
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+            QMessageBox.information(
+                self,
+                "Успех",
+                f"Конфигурация сохранена!\n"
+                f"Аккордов: {total_saved}\n"
+                f"Файл: {os.path.basename(file_path)}"
+            )
+            print(f"✅ Конфигурация сохранена: {total_saved} аккордов")
+
+        except Exception as e:
+            error_msg = f"Ошибка при сохранении конфигурации: {str(e)}"
+            QMessageBox.critical(self, "Ошибка", error_msg)
+            print(f"❌ {error_msg}")
+            import traceback
+            traceback.print_exc()
+
+    def _serialize_elements(self, elements):
+        """Сериализация элементов для сохранения в JSON"""
+        serialized = []
+        for element in elements:
+            element_data = {
+                "type": element['type'],
+                "data": element['data'].copy()
+            }
+            # Убираем временные поля
+            if '_key' in element_data['data']:
+                del element_data['data']['_key']
+            serialized.append(element_data)
+        return serialized
+
+    def apply_outline_settings(self, elements):
+        """Применение настроек обводки к элементам с улучшенной отрисовкой"""
+        # Определяем толщину обводки для барре
+        barre_outline_widths = {
+            "none": 0,
+            "thin": 3,  # Увеличил для лучшей видимости
+            "medium": 5,
+            "thick": 8
+        }
+
+        # Определяем толщину обводки для нот
+        note_outline_widths = {
+            "none": 0,
+            "thin": 2,
+            "medium": 3,
+            "thick": 5
+        }
+
+        barre_width = barre_outline_widths.get(self.current_barre_outline, 0)
+        note_width = note_outline_widths.get(self.current_note_outline, 0)
+
+        modified_elements = []
+        for element in elements:
+            if element['type'] == 'barre' and barre_width > 0:
+                # Добавляем улучшенную обводку к барре
+                modified_element = element.copy()
+                modified_element['data'] = element['data'].copy()
+                modified_element['data']['outline_width'] = barre_width
+                modified_element['data']['outline_color'] = [0, 0, 0]  # Черный цвет
+                modified_elements.append(modified_element)
+            elif element['type'] == 'note' and note_width > 0:
+                # Добавляем улучшенную обводку к нотам
+                modified_element = element.copy()
+                modified_element['data'] = element['data'].copy()
+                modified_element['data']['outline_width'] = note_width
+                modified_element['data']['outline_color'] = [0, 0, 0]  # Черный цвет
+                modified_elements.append(modified_element)
             else:
-                self.image_label.setText("Аккорды не найдены")
+                # Для других элементов оставляем как есть
+                modified_elements.append(element)
 
-    def on_chord_clicked(self, chord_info):
-        """Обработчик клика по кнопке аккорда"""
-        self.current_chord = chord_info
-        self.display_chord(chord_info)
-        self.update_chord_info(chord_info)
+        return modified_elements
+
+    def draw_elements_with_outline(self, painter, elements, crop_offset=None):
+        """Улучшенная отрисовка элементов с обводкой"""
+        try:
+            # Сначала рисуем все элементы через стандартный метод config_manager
+            # но с учетом смещения области обрезки
+            if crop_offset:
+                crop_x, crop_y, crop_width, crop_height = crop_offset
+                self.config_manager.draw_elements_on_canvas(painter, elements,
+                                                            (crop_x, crop_y, crop_width, crop_height))
+            else:
+                self.config_manager.draw_elements_on_canvas(painter, elements, None)
+
+            # Затем рисуем обводку для элементов, у которых она включена
+            # Сначала рисуем обводку барре (нижний слой)
+            for element in elements:
+                element_type = element['type']
+                data = element['data']
+
+                if element_type == 'barre' and data.get('outline_width', 0) > 0:
+                    self._draw_barre_with_outline(painter, data, crop_offset)
+
+            # Затем рисуем обводку нот (верхний слой - приоритет выше)
+            for element in elements:
+                element_type = element['type']
+                data = element['data']
+
+                if element_type == 'note' and data.get('outline_width', 0) > 0:
+                    self._draw_note_with_outline(painter, data, crop_offset)
+
+        except Exception as e:
+            print(f"Ошибка при отрисовке элементов с обводкой: {e}")
+
+    def _draw_note_with_outline(self, painter, data, crop_offset=None):
+        """Улучшенная отрисовка ноты с обводкой"""
+        try:
+            x = data.get('x', 0)
+            y = data.get('y', 0)
+            radius = data.get('radius', 10)
+            outline_width = data.get('outline_width', 2)
+
+            # Корректируем координаты с учетом смещения области обрезки
+            if crop_offset:
+                crop_x, crop_y, _, _ = crop_offset
+                x = x - crop_x
+                y = y - crop_y
+
+            # Сохраняем настройки painter
+            painter.save()
+
+            # Включаем сглаживание для плавных краев
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+            # Рисуем обводку (внешний круг)
+            outline_pen = QPen(QColor(0, 0, 0))  # Черный цвет обводки
+            outline_pen.setWidth(outline_width)
+            outline_pen.setCapStyle(Qt.RoundCap)
+            outline_pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(outline_pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawEllipse(int(x - radius), int(y - radius),
+                                int(radius * 2), int(radius * 2))
+
+            # Восстанавливаем настройки painter
+            painter.restore()
+
+        except Exception as e:
+            print(f"Ошибка при отрисовке ноты с обводкой: {e}")
+
+    def _draw_barre_with_outline(self, painter, data, crop_offset=None):
+        """Улучшенная отрисовка барре с обводкой"""
+        try:
+            x = data.get('x', 0)
+            y = data.get('y', 0)
+            width = data.get('width', 50)
+            height = data.get('height', 20)
+            outline_width = data.get('outline_width', 3)
+            radius = data.get('radius', 10)  # Радиус скругления углов
+
+            # Корректируем координаты с учетом смещения области обрезки
+            if crop_offset:
+                crop_x, crop_y, _, _ = crop_offset
+                x = x - crop_x
+                y = y - crop_y
+
+            # Сохраняем настройки painter
+            painter.save()
+
+            # Включаем сглаживание для плавных краев
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+            # Рисуем обводку (внешний прямоугольник)
+            outline_pen = QPen(QColor(0, 0, 0))  # Черный цвет обводки
+            outline_pen.setWidth(outline_width)
+            outline_pen.setCapStyle(Qt.RoundCap)
+            outline_pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(outline_pen)
+            painter.setBrush(Qt.NoBrush)
+
+            # Рисуем скругленный прямоугольник для обводки
+            outline_rect = QRectF(x - width / 2, y - height / 2, width, height)
+            painter.drawRoundedRect(outline_rect, radius, radius)
+
+            # Восстанавливаем настройки painter
+            painter.restore()
+
+        except Exception as e:
+            print(f"Ошибка при отрисовке барре с обводкой: {e}")
+
+    def convert_frets_to_numeric(self, elements):
+        """Преобразование римских цифр ладов в обычные цифры"""
+        roman_to_numeric = {
+            'I': '1', 'II': '2', 'III': '3', 'IV': '4', 'V': '5',
+            'VI': '6', 'VII': '7', 'VIII': '8', 'IX': '9', 'X': '10',
+            'XI': '11', 'XII': '12', 'XIII': '13', 'XIV': '14', 'XV': '15',
+            'XVI': '16'
+        }
+
+        converted_elements = []
+        for element in elements:
+            if element['type'] == 'fret':
+                # Создаем копию данных элемента
+                converted_element = element.copy()
+                fret_data = converted_element['data'].copy()
+
+                # Преобразуем символ лада
+                original_symbol = fret_data.get('symbol', 'I')
+                if original_symbol in roman_to_numeric:
+                    fret_data['symbol'] = roman_to_numeric[original_symbol]
+                    print(f"🎯 Преобразован лад: {original_symbol} -> {fret_data['symbol']}")
+
+                converted_element['data'] = fret_data
+                converted_elements.append(converted_element)
+            else:
+                # Для других типов элементов оставляем как есть
+                converted_elements.append(element)
+
+        return converted_elements
 
     def display_chord(self, chord_info):
         """Отображение выбранного аккорда на изображении с выбранным масштабом"""
@@ -722,14 +905,19 @@ class ChordConfigTab(QWidget):
                 # Создаем painter для нового изображения
                 painter = QPainter(result_pixmap)
 
+                # Включаем сглаживание для всего изображения
+                painter.setRenderHint(QPainter.Antialiasing)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform)
+                painter.setRenderHint(QPainter.TextAntialiasing)
+
                 # Копируем область из оригинального изображения
                 painter.drawPixmap(0, 0, self.original_pixmap,
                                    crop_x, crop_y, crop_width, crop_height)
 
                 # Рисуем элементы на НОВОМ изображении с правильными координатами
-                self.config_manager.draw_elements_on_canvas(
-                    painter, elements, (crop_x, crop_y, crop_width, crop_height)
-                )
+                # Используем улучшенную отрисовку с обводкой и передаем смещение
+                self.draw_elements_with_outline(painter, elements, (crop_x, crop_y, crop_width, crop_height))
+
                 painter.end()
 
                 # Применяем выбранный масштаб
@@ -797,13 +985,19 @@ class ChordConfigTab(QWidget):
 
             else:
                 # Если нет обрезки, рисуем на полном изображении
-                result_pixmap = self.config_manager.draw_elements_on_image(
-                    self.original_pixmap, elements, None
-                )
+                result_pixmap = QPixmap(self.original_pixmap.size())
+                result_pixmap.fill(Qt.white)
+
+                painter = QPainter(result_pixmap)
+                painter.setRenderHint(QPainter.Antialiasing)
+                painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+                painter.drawPixmap(0, 0, self.original_pixmap)
+                self.draw_elements_with_outline(painter, elements, None)
+                painter.end()
 
                 # Применяем выбранный масштаб
                 if self.current_scale_type == "small1":
-                    # МАЛЕНЬКИЙ 1
                     scaled_pixmap = result_pixmap.scaled(
                         self.image_label.width(),
                         self.image_label.height(),
@@ -811,133 +1005,38 @@ class ChordConfigTab(QWidget):
                         Qt.SmoothTransformation
                     )
                     self.image_label.setPixmap(scaled_pixmap)
-                    print(f"📏 Маленький 1 полного изображения")
-
                 elif self.current_scale_type == "small2":
-                    # МАЛЕНЬКИЙ 2 - 30% от оригинального
                     display_width = int(result_pixmap.width() * 0.3)
                     display_height = int(result_pixmap.height() * 0.3)
-
                     scaled_pixmap = result_pixmap.scaled(
-                        display_width,
-                        display_height,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation
+                        display_width, display_height,
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
                     self.image_label.setPixmap(scaled_pixmap)
-                    print(f"📏 Маленький 2 (30%) полного изображения")
-
                 elif self.current_scale_type == "medium1":
-                    # СРЕДНИЙ 1 - 50% от оригинального
                     display_width = int(result_pixmap.width() * 0.5)
                     display_height = int(result_pixmap.height() * 0.5)
-
                     scaled_pixmap = result_pixmap.scaled(
-                        display_width,
-                        display_height,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation
+                        display_width, display_height,
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
                     self.image_label.setPixmap(scaled_pixmap)
-                    print(f"📏 Средний 1 (50%) полного изображения")
-
                 elif self.current_scale_type == "medium2":
-                    # СРЕДНИЙ 2 - 70% от оригинального
                     display_width = int(result_pixmap.width() * 0.7)
                     display_height = int(result_pixmap.height() * 0.7)
-
                     scaled_pixmap = result_pixmap.scaled(
-                        display_width,
-                        display_height,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation
+                        display_width, display_height,
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation
                     )
                     self.image_label.setPixmap(scaled_pixmap)
-                    print(f"📏 Средний 2 (70%) полного изображения")
-
                 else:
-                    # ОРИГИНАЛЬНЫЙ РАЗМЕР
                     self.image_label.setPixmap(result_pixmap)
-                    print(f"📏 Оригинальный размер полного изображения")
 
         except Exception as e:
             self.image_label.setText(f"Ошибка отображения: {str(e)}")
             print(f"Ошибка при отображении аккорда: {e}")
             import traceback
             traceback.print_exc()
-
-    def convert_frets_to_numeric(self, elements):
-        """Преобразование римских цифр ладов в обычные цифры"""
-        roman_to_numeric = {
-            'I': '1', 'II': '2', 'III': '3', 'IV': '4', 'V': '5',
-            'VI': '6', 'VII': '7', 'VIII': '8', 'IX': '9', 'X': '10',
-            'XI': '11', 'XII': '12', 'XIII': '13', 'XIV': '14', 'XV': '15',
-            'XVI': '16'
-        }
-
-        converted_elements = []
-        for element in elements:
-            if element['type'] == 'fret':
-                # Создаем копию данных элемента
-                converted_element = element.copy()
-                fret_data = converted_element['data'].copy()
-
-                # Преобразуем символ лада
-                original_symbol = fret_data.get('symbol', 'I')
-                if original_symbol in roman_to_numeric:
-                    fret_data['symbol'] = roman_to_numeric[original_symbol]
-                    print(f"🎯 Преобразован лад: {original_symbol} -> {fret_data['symbol']}")
-
-                converted_element['data'] = fret_data
-                converted_elements.append(converted_element)
-            else:
-                # Для других типов элементов оставляем как есть
-                converted_elements.append(element)
-
-        return converted_elements
-
-    def apply_outline_settings(self, elements):
-        """Применение настроек обводки к элементам"""
-        # Определяем толщину обводки для барре (В ДВА РАЗА ТОЛЩЕ)
-        barre_outline_widths = {
-            "none": 0,
-            "thin": 2,  # было 1, стало 2
-            "medium": 4,  # было 2, стало 4
-            "thick": 6  # было 3, стало 6
-        }
-
-        # Определяем толщину обводки для нот (В ДВА РАЗА ТОЛЩЕ)
-        note_outline_widths = {
-            "none": 0,
-            "thin": 2,  # было 1, стало 2
-            "medium": 4,  # было 2, стало 4
-            "thick": 6  # было 3, стало 6
-        }
-
-        barre_width = barre_outline_widths.get(self.current_barre_outline, 0)
-        note_width = note_outline_widths.get(self.current_note_outline, 0)
-
-        modified_elements = []
-        for element in elements:
-            if element['type'] == 'barre' and barre_width > 0:
-                # Добавляем обводку к барре
-                modified_element = element.copy()
-                modified_element['data'] = element['data'].copy()
-                modified_element['data']['outline_width'] = barre_width
-                modified_element['data']['outline_color'] = [0, 0, 0]  # Черный цвет
-                modified_elements.append(modified_element)
-            elif element['type'] == 'note' and note_width > 0:
-                # Добавляем обводку к нотам
-                modified_element = element.copy()
-                modified_element['data'] = element['data'].copy()
-                modified_element['data']['outline_width'] = note_width
-                modified_element['data']['outline_color'] = [0, 0, 0]  # Черный цвет
-                modified_elements.append(modified_element)
-            else:
-                # Для других элементов оставляем как есть
-                modified_elements.append(element)
-
-        return modified_elements
 
 
 class MainWindow(QMainWindow):
