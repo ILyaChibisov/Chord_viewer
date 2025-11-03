@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QGroupBox, QMessageBox, QSizePolicy, QFileDialog, QMainWindow, QApplication, QToolBar,
                              QAction)
 from PyQt5.QtCore import Qt, QSize, QRectF
-from PyQt5.QtGui import QPixmap, QPainter, QPen, QBrush, QColor
+from PyQt5.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QFont, QFontMetrics
 import os
 import pandas as pd
 import json
@@ -601,7 +601,6 @@ class ChordConfigTab(QWidget):
                         "fp3": chord.get('FP3'),
                         "fp4": chord.get('FP4')
                     }
-
             # Добавляем информацию о группах
             config_data["groups"] = self.config_manager.get_chord_groups()
 
@@ -717,7 +716,7 @@ class ChordConfigTab(QWidget):
         return modified_elements
 
     def draw_elements_with_outline(self, painter, elements, crop_offset=None):
-        """Улучшенная отрисовка элементов с обводкой"""
+        """Улучшенная отрисовка элементов с обводкой - ПРАВИЛЬНЫЙ ПОРЯДОК"""
         try:
             # Сначала рисуем все элементы через стандартный метод config_manager
             # но с учетом смещения области обрезки
@@ -728,28 +727,227 @@ class ChordConfigTab(QWidget):
             else:
                 self.config_manager.draw_elements_on_canvas(painter, elements, None)
 
-            # Затем рисуем обводку для элементов, у которых она включена
-            # Сначала рисуем обводку барре (нижний слой)
-            for element in elements:
-                element_type = element['type']
-                data = element['data']
+            # РАЗДЕЛЯЕМ ЭЛЕМЕНТЫ ПО ТИПАМ ДЛЯ ПРАВИЛЬНОГО ПОРЯДКА ОТРИСОВКИ
+            barre_elements = []
+            note_elements = []
 
-                if element_type == 'barre' and data.get('outline_width', 0) > 0:
+            for element in elements:
+                if element['type'] == 'barre':
+                    barre_elements.append(element)
+                elif element['type'] == 'note':
+                    note_elements.append(element)
+
+            # ПРАВИЛЬНЫЙ ПОРЯДОК ОТРИСОВКИ:
+            # 1. Сначала рисуем обводку баре (самый нижний слой)
+            for element in barre_elements:
+                data = element['data']
+                if data.get('outline_width', 0) > 0:
                     self._draw_barre_with_outline(painter, data, crop_offset)
 
-            # Затем рисуем обводку нот (верхний слой - приоритет выше)
-            for element in elements:
-                element_type = element['type']
+            # 2. Затем рисуем основное баре (поверх обводки баре)
+            for element in barre_elements:
                 data = element['data']
+                # Рисуем основное баре (без обводки)
+                self._draw_barre_fill_only(painter, data, crop_offset)
 
-                if element_type == 'note' and data.get('outline_width', 0) > 0:
+            # 3. Затем рисуем ноты с обводкой (поверх баре)
+            for element in note_elements:
+                data = element['data']
+                if data.get('outline_width', 0) > 0:
                     self._draw_note_with_outline(painter, data, crop_offset)
+
+            # 4. Наконец рисуем основные ноты (поверх обводки нот)
+            for element in note_elements:
+                data = element['data']
+                # Рисуем основную ноту (без обводки)
+                self._draw_note_fill_only(painter, data, crop_offset)
 
         except Exception as e:
             print(f"Ошибка при отрисовке элементов с обводкой: {e}")
 
+    def _draw_barre_fill_only(self, painter, data, crop_offset=None):
+        """Отрисовка только заливки баре (без обводки)"""
+        try:
+            x = data.get('x', 0)
+            y = data.get('y', 0)
+            width = data.get('width', 50)
+            height = data.get('height', 20)
+            radius = data.get('radius', 10)
+            style = data.get('style', 'wood')
+
+            # Корректируем координаты с учетом смещения области обрезки
+            if crop_offset:
+                crop_x, crop_y, _, _ = crop_offset
+                x = x - crop_x
+                y = y - crop_y
+
+            # Сохраняем настройки painter
+            painter.save()
+
+            # Включаем сглаживание для плавных краев
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+            # Получаем кисть для заливки
+            brush = self.config_manager.get_brush_from_style(style, x, y, 0, width, height)
+
+            # Рисуем только заливку (без обводки)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(brush)
+
+            # Рисуем скругленный прямоугольник для заливки
+            fill_rect = QRectF(x - width / 2, y - height / 2, width, height)
+            painter.drawRoundedRect(fill_rect, radius, radius)
+
+            # Восстанавливаем настройки painter
+            painter.restore()
+
+        except Exception as e:
+            print(f"Ошибка при отрисовке заливки баре: {e}")
+
+    def _draw_note_fill_only(self, painter, data, crop_offset=None):
+        """Отрисовка только заливки ноты (без обводки)"""
+        try:
+            x = data.get('x', 0)
+            y = data.get('y', 0)
+            radius = data.get('radius', 10)
+            style = data.get('style', 'red_3d')
+
+            # Корректируем координаты с учетом смещения области обрезки
+            if crop_offset:
+                crop_x, crop_y, _, _ = crop_offset
+                x = x - crop_x
+                y = y - crop_y
+
+            # Сохраняем настройки painter
+            painter.save()
+
+            # Включаем сглаживание для плавных краев
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+            # Получаем кисть для заливки
+            from drawing_elements import DrawingElements
+            brush = DrawingElements.get_brush_from_style(style, x, y, radius)
+
+            # Рисуем только заливку (без обводки)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(brush)
+            painter.drawEllipse(int(x - radius), int(y - radius),
+                                int(radius * 2), int(radius * 2))
+
+            # Рисуем текст ноты
+            self._draw_note_text(painter, data, x, y, radius)
+
+            # Восстанавливаем настройки painter
+            painter.restore()
+
+        except Exception as e:
+            print(f"Ошибка при отрисовке заливки ноты: {e}")
+
+    def _draw_note_text(self, painter, data, x, y, radius):
+        """Отрисовка текста ноты"""
+        try:
+            # Определяем отображаемый текст
+            display_text = data.get('display_text', 'finger')
+            if display_text == 'note_name':
+                symbol = data.get('note_name', '')
+            elif display_text == 'symbol':
+                symbol = data.get('symbol', '')
+            else:  # finger
+                symbol = data.get('finger', '1')
+
+            if not symbol:
+                return
+
+            # Настраиваем цвет текста
+            from drawing_elements import DrawingElements
+            text_color = DrawingElements.get_color_from_data(data.get('text_color', [255, 255, 255]))
+            painter.setPen(QPen(text_color))
+
+            # Настраиваем шрифт
+            font_size = max(10, radius)
+            font = QFont("Arial", font_size)
+
+            font_style = data.get('font_style', 'normal')
+            if font_style == 'bold':
+                font.setWeight(QFont.Bold)
+            elif font_style == 'light':
+                font.setWeight(QFont.Light)
+            elif font_style == 'italic':
+                font.setItalic(True)
+            elif font_style == 'bold_italic':
+                font.setWeight(QFont.Bold)
+                font.setItalic(True)
+
+            painter.setFont(font)
+
+            # Идеальное центрирование текста
+            font_metrics = QFontMetrics(font)
+            text_width = font_metrics.width(symbol)
+            text_height = font_metrics.height()
+
+            # Если текст слишком большой для круга, уменьшаем шрифт
+            if text_width > radius * 1.8 or text_height > radius * 1.8:
+                font_size = max(8, radius * 3 // 4)
+                font.setPointSize(font_size)
+                painter.setFont(font)
+                font_metrics = QFontMetrics(font)
+                text_width = font_metrics.width(symbol)
+                text_height = font_metrics.height()
+
+            # Центрируем по горизонтали и вертикали
+            text_x = x - text_width // 2
+            text_y = y + text_height // 4
+
+            painter.drawText(text_x, text_y, symbol)
+
+        except Exception as e:
+            print(f"Ошибка при отрисовке текста ноты: {e}")
+
+    def _draw_barre_with_outline(self, painter, data, crop_offset=None):
+        """Отрисовка ТОЛЬКО обводки баре"""
+        try:
+            x = data.get('x', 0)
+            y = data.get('y', 0)
+            width = data.get('width', 50)
+            height = data.get('height', 20)
+            outline_width = data.get('outline_width', 3)
+            radius = data.get('radius', 10)
+
+            # Корректируем координаты с учетом смещения области обрезки
+            if crop_offset:
+                crop_x, crop_y, _, _ = crop_offset
+                x = x - crop_x
+                y = y - crop_y
+
+            # Сохраняем настройки painter
+            painter.save()
+
+            # Включаем сглаживание для плавных краев
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+            # Рисуем ТОЛЬКО обводку (внешний прямоугольник)
+            outline_pen = QPen(QColor(0, 0, 0))  # Черный цвет обводки
+            outline_pen.setWidth(outline_width)
+            outline_pen.setCapStyle(Qt.RoundCap)
+            outline_pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(outline_pen)
+            painter.setBrush(Qt.NoBrush)  # Важно: без заливки!
+
+            # Рисуем скругленный прямоугольник для обводки
+            outline_rect = QRectF(x - width / 2, y - height / 2, width, height)
+            painter.drawRoundedRect(outline_rect, radius, radius)
+
+            # Восстанавливаем настройки painter
+            painter.restore()
+
+        except Exception as e:
+            print(f"Ошибка при отрисовке обводки баре: {e}")
+
     def _draw_note_with_outline(self, painter, data, crop_offset=None):
-        """Улучшенная отрисовка ноты с обводкой"""
+        """Отрисовка ТОЛЬКО обводки ноты"""
         try:
             x = data.get('x', 0)
             y = data.get('y', 0)
@@ -769,13 +967,14 @@ class ChordConfigTab(QWidget):
             painter.setRenderHint(QPainter.Antialiasing)
             painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
-            # Рисуем обводку (внешний круг)
+            # Рисуем ТОЛЬКО обводку (внешний круг)
             outline_pen = QPen(QColor(0, 0, 0))  # Черный цвет обводки
             outline_pen.setWidth(outline_width)
             outline_pen.setCapStyle(Qt.RoundCap)
             outline_pen.setJoinStyle(Qt.RoundJoin)
             painter.setPen(outline_pen)
-            painter.setBrush(Qt.NoBrush)
+            painter.setBrush(Qt.NoBrush)  # Важно: без заливки!
+
             painter.drawEllipse(int(x - radius), int(y - radius),
                                 int(radius * 2), int(radius * 2))
 
@@ -783,48 +982,7 @@ class ChordConfigTab(QWidget):
             painter.restore()
 
         except Exception as e:
-            print(f"Ошибка при отрисовке ноты с обводкой: {e}")
-
-    def _draw_barre_with_outline(self, painter, data, crop_offset=None):
-        """Улучшенная отрисовка барре с обводкой"""
-        try:
-            x = data.get('x', 0)
-            y = data.get('y', 0)
-            width = data.get('width', 50)
-            height = data.get('height', 20)
-            outline_width = data.get('outline_width', 3)
-            radius = data.get('radius', 10)  # Радиус скругления углов
-
-            # Корректируем координаты с учетом смещения области обрезки
-            if crop_offset:
-                crop_x, crop_y, _, _ = crop_offset
-                x = x - crop_x
-                y = y - crop_y
-
-            # Сохраняем настройки painter
-            painter.save()
-
-            # Включаем сглаживание для плавных краев
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
-
-            # Рисуем обводку (внешний прямоугольник)
-            outline_pen = QPen(QColor(0, 0, 0))  # Черный цвет обводки
-            outline_pen.setWidth(outline_width)
-            outline_pen.setCapStyle(Qt.RoundCap)
-            outline_pen.setJoinStyle(Qt.RoundJoin)
-            painter.setPen(outline_pen)
-            painter.setBrush(Qt.NoBrush)
-
-            # Рисуем скругленный прямоугольник для обводки
-            outline_rect = QRectF(x - width / 2, y - height / 2, width, height)
-            painter.drawRoundedRect(outline_rect, radius, radius)
-
-            # Восстанавливаем настройки painter
-            painter.restore()
-
-        except Exception as e:
-            print(f"Ошибка при отрисовке барре с обводкой: {e}")
+            print(f"Ошибка при отрисовке обводки ноты: {e}")
 
     def convert_frets_to_numeric(self, elements):
         """Преобразование римских цифр ладов в обычные цифры"""
