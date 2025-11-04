@@ -13,6 +13,7 @@ import sys
 import re
 
 from chord_config_manager import ChordConfigManager
+from chord_sound_player import ChordSoundPlayer
 
 
 class ChordConfigTab(QWidget):
@@ -28,6 +29,9 @@ class ChordConfigTab(QWidget):
         self.current_chords = []
         self.current_chord = None
         self.original_pixmap = None  # Сохраняем оригинальное изображение
+
+        # Добавляем плеер звуков
+        self.sound_player = ChordSoundPlayer()
 
         self.initUI()
         self.load_configuration()
@@ -106,20 +110,8 @@ class ChordConfigTab(QWidget):
 
         layout.addLayout(chords_row_layout)
 
-        # ИНФОРМАЦИЯ О ВЫБРАННОМ АККОРДЕ
-        self.chord_info_label = QLabel("Выберите аккорд для отображения информации")
-        self.chord_info_label.setStyleSheet("""
-            QLabel {
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                padding: 8px;
-                border-radius: 4px;
-                font-size: 12px;
-            }
-        """)
-        self.chord_info_label.setAlignment(Qt.AlignCenter)
-        self.chord_info_label.setFixedHeight(40)
-        layout.addWidget(self.chord_info_label)
+        # СЕКЦИЯ ИНФОРМАЦИИ О АККОРДЕ С КНОПКОЙ ВОСПРОИЗВЕДЕНИЯ
+        self.create_chord_info_section(layout)
 
         # Область для изображения с прокруткой
         self.image_scroll = QScrollArea()
@@ -131,6 +123,122 @@ class ChordConfigTab(QWidget):
         self.image_label.setMinimumSize(400, 300)  # Оригинальный минимальный размер
         self.image_scroll.setWidget(self.image_label)
         layout.addWidget(self.image_scroll, 1)  # Растягиваем область с изображением
+
+    def create_chord_info_section(self, layout):
+        """Создание секции информации об аккорде с кнопкой воспроизведения"""
+        # Основной контейнер
+        info_container = QWidget()
+        info_layout = QHBoxLayout(info_container)
+        info_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Метка с информацией об аккорде
+        self.chord_info_label = QLabel("Выберите аккорд для отображения информации")
+        self.chord_info_label.setStyleSheet("""
+            QLabel {
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                padding: 8px;
+                border-radius: 4px;
+                font-size: 12px;
+            }
+        """)
+        self.chord_info_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        # Кнопка воспроизведения звука
+        self.play_sound_btn = QPushButton("🎵 Послушать")
+        self.play_sound_btn.setFixedSize(120, 40)
+        self.play_sound_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
+        self.play_sound_btn.clicked.connect(self.play_current_chord_sound)
+        self.play_sound_btn.setEnabled(False)  # Изначально отключена
+
+        # Добавляем виджеты в layout
+        info_layout.addWidget(self.chord_info_label, 1)  # Растягиваем на все доступное пространство
+        info_layout.addWidget(self.play_sound_btn)
+
+        info_container.setFixedHeight(60)
+        layout.addWidget(info_container)
+
+    def play_current_chord_sound(self):
+        """Воспроизведение звука текущего аккорда"""
+        if not self.current_chord:
+            return
+
+        # Меняем стиль кнопки на время воспроизведения
+        self.play_sound_btn.setText("▶️ Играет...")
+        self.play_sound_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+        """)
+        self.play_sound_btn.setEnabled(False)
+
+        try:
+            # Получаем данные аккорда
+            chord_data = self.current_chord['data']
+            chord_name = chord_data.get('CHORD', '')
+            variant = chord_data.get('VARIANT', '')
+
+            if chord_name:
+                # Преобразуем вариант в строку и убираем лишние пробелы
+                variant_str = str(variant).strip() if variant else "1"
+
+                print(f"🎵 Попытка воспроизведения: {chord_name}, вариант {variant_str}")
+
+                # Пробуем воспроизвести звук
+                success = self.sound_player.play_chord_sound(chord_name, variant_str)
+
+                if not success:
+                    # Если не нашли с вариантом, пробуем без варианта
+                    success = self.sound_player.play_chord_sound(chord_name)
+
+                if not success:
+                    print(f"❌ Не удалось найти звуковой файл для аккорда {chord_name}")
+
+        except Exception as e:
+            print(f"❌ Ошибка при воспроизведении звука: {e}")
+
+        # Восстанавливаем кнопку после небольшой задержки
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(500, self.restore_play_button)
+
+    def restore_play_button(self):
+        """Восстановление обычного состояния кнопки"""
+        self.play_sound_btn.setText("🎵 Послушать")
+        self.play_sound_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        self.play_sound_btn.setEnabled(True)
 
     def on_scale_changed(self, scale_type):
         """Обработчик изменения масштаба"""
@@ -203,6 +311,7 @@ class ChordConfigTab(QWidget):
         else:
             self.current_chord = None
             self.chord_info_label.setText("Аккорды не найдены")
+            self.play_sound_btn.setEnabled(False)
             if self.original_pixmap:
                 self.display_original_image()
             else:
@@ -227,11 +336,16 @@ class ChordConfigTab(QWidget):
                 # Формируем текст информации
                 info_text = f"<b>Аккорд:</b> {chord} | <b>Название:</b> {caption} | <b>Тип:</b> {chord_type} | <b>Вариант:</b> {variant}"
                 self.chord_info_label.setText(info_text)
+
+                # Включаем кнопку воспроизведения
+                self.play_sound_btn.setEnabled(True)
             else:
                 self.chord_info_label.setText("Информация об аккорде недоступна")
+                self.play_sound_btn.setEnabled(False)
         except Exception as e:
             print(f"Ошибка при обновлении информации об аккорде: {e}")
             self.chord_info_label.setText("Ошибка загрузки информации")
+            self.play_sound_btn.setEnabled(False)
 
     def get_variant_number(self, chord_name, variant):
         """Получение номера варианта для отображения на кнопке"""
@@ -595,7 +709,6 @@ class ChordConfigTab(QWidget):
                         "fnl": chord.get('FNL'),
                         "fn": chord.get('FN'),
                         "fpol": chord.get('FPOL'),
-                        "fpxl": chord.get('FPXL'),
                         "fp1": chord.get('FP1'),
                         "fp2": chord.get('FP2'),
                         "fp3": chord.get('FP3'),
