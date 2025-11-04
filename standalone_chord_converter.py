@@ -153,7 +153,7 @@ class StandaloneChordConverter:
             self.config_path.parent / 'img.png',
             self.config_path.parent / 'img.jpg',
             self.config_path.parent / 'template.png',
-            Path('img.png'),
+            Path('source/img.png'),
             Path('img.jpg'),
             Path('template.png'),
             self.config_path.with_name('img.png'),
@@ -597,7 +597,7 @@ def find_config_file() -> Optional[Path]:
     possible_paths = [
         Path("chords_configuration.json"),
         Path("chords_config/chords_configuration.json"),
-        Path("templates2/chords_configuration.json"),
+        Path("source/chords_configuration.json"),
         Path("config/chords_configuration.json"),
         Path("../chords_configuration.json"),
     ]
@@ -614,7 +614,7 @@ def find_config_file() -> Optional[Path]:
 def find_sounds_directory() -> Optional[Path]:
     """Автоматически находит папку со звуками"""
     possible_paths = [
-        Path("sounds"),
+        Path("source/sounds"),
         Path("sound"),
         Path("chords_config/sounds"),
         Path("templates2/sounds"),
