@@ -12,11 +12,11 @@ from PyQt5.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QFont, QFontMet
 import os
 import json
 import sys
+from io import BytesIO
 
 # Импортируем наш загрузчик автономных данных
 try:
     from chords_data_loader import ChordsDataLoader
-
     HAS_STANDALONE_DATA = True
 except ImportError:
     HAS_STANDALONE_DATA = False
@@ -24,8 +24,7 @@ except ImportError:
 
 from drawing_elements import DrawingElements
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
-from PyQt5.QtCore import QUrl, QBuffer
-
+from PyQt5.QtCore import QUrl, QBuffer, QByteArray
 
 class StandaloneChordSoundPlayer:
     """Плеер звуков для автономных данных"""
@@ -49,14 +48,12 @@ class StandaloneChordSoundPlayer:
             buffer.setData(sound_data)
             buffer.open(QBuffer.ReadOnly)
 
-            # Создаем медиаконтент
-            media_content = QMediaContent()
-
-            # Останавливаем предыдущее воспроизведение
-            self.media_player.stop()
-
-            # Устанавливаем медиа и воспроизводим
+            # Создаем медиаконтент из буфера
+            media_content = QMediaContent(QUrl.fromLocalFile(""))  # Создаем пустой URL
             self.media_player.setMedia(media_content, buffer)
+
+            # Останавливаем предыдущее воспроизведение и запускаем новое
+            self.media_player.stop()
             self.media_player.play()
 
             print(f"🎵 Воспроизводится: {chord_name}, вариант {variant}")
@@ -65,7 +62,6 @@ class StandaloneChordSoundPlayer:
         except Exception as e:
             print(f"❌ Ошибка воспроизведения: {e}")
             return False
-
 
 class StandaloneChordConfigTab(QWidget):
     """Вкладка конфигурации аккордов для автономных данных"""
@@ -237,15 +233,19 @@ class StandaloneChordConfigTab(QWidget):
             # Загружаем шаблон изображения
             template_data = self.chords_loader.get_template_image_data()
             if template_data:
+                # Создаем QPixmap из bytes
                 self.original_pixmap = QPixmap()
                 self.original_pixmap.loadFromData(template_data)
+
                 if not self.original_pixmap.isNull():
+                    print(f"✅ Шаблон изображения загружен: {self.original_pixmap.width()}x{self.original_pixmap.height()}")
                     self.display_original_image()
-                    print("✅ Шаблон изображения загружен из автономных данных")
                 else:
                     self.image_label.setText("Ошибка загрузки шаблона")
+                    print("❌ Не удалось загрузить шаблон изображения")
             else:
                 self.image_label.setText("Шаблон не найден в автономных данных")
+                print("❌ Шаблон изображения не найден в данных")
 
             # Загружаем группы аккордов
             groups = self.get_chord_groups()
@@ -257,6 +257,7 @@ class StandaloneChordConfigTab(QWidget):
                 self.load_chord_buttons()
             else:
                 self.image_label.setText("Группы аккордов не найдены")
+                print("❌ Группы аккордов не найдены")
 
             # Выводим статистику
             self.chords_loader.print_stats()
@@ -265,6 +266,8 @@ class StandaloneChordConfigTab(QWidget):
             error_msg = f"Ошибка загрузки автономных данных: {str(e)}"
             self.image_label.setText(error_msg)
             print(f"❌ {error_msg}")
+            import traceback
+            traceback.print_exc()
 
     def get_chord_groups(self):
         """Получение списка групп аккордов из автономных данных"""
@@ -299,6 +302,7 @@ class StandaloneChordConfigTab(QWidget):
 
             # Получаем аккорды для текущей группы
             self.current_chords = self.get_chords_by_group(self.current_group)
+            print(f"🔧 Загружено {len(self.current_chords)} аккордов для группы '{self.current_group}'")
 
             if not self.current_chords:
                 label = QLabel("Аккорды не найдены")
@@ -338,6 +342,7 @@ class StandaloneChordConfigTab(QWidget):
             # Автоматически загружаем первый аккорд группы
             if self.current_chords:
                 self.current_chord = self.current_chords[0]
+                print(f"🎵 Автовыбор первого аккорда: {self.current_chord['name']}")
                 self.display_chord(self.current_chord)
                 self.update_chord_info(self.current_chord)
 
@@ -348,6 +353,7 @@ class StandaloneChordConfigTab(QWidget):
 
     def on_chord_clicked(self, chord_info):
         """Обработчик клика по кнопке аккорда"""
+        print(f"🎯 Выбран аккорд: {chord_info['name']}")
         self.current_chord = chord_info
         self.display_chord(chord_info)
         self.update_chord_info(chord_info)
@@ -367,6 +373,8 @@ class StandaloneChordConfigTab(QWidget):
                 # Включаем кнопку воспроизведения если есть звук
                 has_sound = any(variant.get('sound_data') for variant in chord_data.get('variants', []))
                 self.play_sound_btn.setEnabled(has_sound)
+
+                print(f"📋 Информация обновлена: {chord_name}, звук: {'✅' if has_sound else '❌'}")
 
             else:
                 self.chord_info_label.setText("Информация об аккорде недоступна")
@@ -400,6 +408,7 @@ class StandaloneChordConfigTab(QWidget):
             self.play_sound_btn.setEnabled(False)
 
             # Воспроизводим звук (вариант 1 по умолчанию)
+            print(f"🔊 Попытка воспроизведения: {chord_name}")
             success = self.sound_player.play_chord_sound(chord_name, 1)
 
             if not success:
@@ -441,6 +450,7 @@ class StandaloneChordConfigTab(QWidget):
                 Qt.SmoothTransformation
             )
             self.image_label.setPixmap(scaled_pixmap)
+            print(f"🖼️ Оригинальное изображение отображено: {scaled_pixmap.width()}x{scaled_pixmap.height()}")
 
     def display_chord(self, chord_info):
         """Отображение выбранного аккорда"""
@@ -459,46 +469,184 @@ class StandaloneChordConfigTab(QWidget):
                 # Берем первый вариант
                 variant_data = variants[0]
                 json_params = variant_data.get('json_parameters', {})
+                print(f"🎨 Получены JSON параметры для {chord_name}: {len(variants)} вариантов")
+            else:
+                print(f"❌ Нет вариантов для аккорда {chord_name}")
 
             if not json_params:
                 self.image_label.setText(f"Нет данных для отрисовки аккорда {chord_name}")
                 return
 
-            # Здесь должна быть логика отрисовки аккорда на основе json_params
-            # Аналогично оригинальному display_chord, но с использованием json_params
+            # Отрисовываем аккорд на основе JSON параметров
             self.draw_chord_from_json_params(json_params, chord_name)
 
         except Exception as e:
             self.image_label.setText(f"Ошибка отображения: {str(e)}")
-            print(f"Ошибка при отображении аккорда: {e}")
+            print(f"❌ Ошибка при отображении аккорда: {e}")
+            import traceback
+            traceback.print_exc()
 
     def draw_chord_from_json_params(self, json_params, chord_name):
         """Отрисовка аккорда на основе JSON параметров"""
         try:
             # Получаем область обрезки
             crop_rect = json_params.get('crop_rect', [])
+            print(f"✂️  Область обрезки: {crop_rect}")
 
             # Получаем элементы для отображения в зависимости от типа
             if self.current_display_type == "fingers":
                 elements = json_params.get('elements_fingers', [])
+                print(f"👆 Элементы пальцев: {len(elements)}")
             else:
                 elements = json_params.get('elements_notes', [])
+                print(f"🎵 Элементы нот: {len(elements)}")
 
             # Получаем настройки отображения
             display_settings = json_params.get('display_settings', {})
+            print(f"⚙️  Настройки отображения: {display_settings}")
 
-            print(f"🎨 Отрисовка аккорда {chord_name}: {len(elements)} элементов")
+            # Если есть область обрезки - обрезаем изображение
+            if crop_rect and len(crop_rect) == 4:
+                crop_x, crop_y, crop_width, crop_height = crop_rect
 
-            # Здесь должна быть полная логика отрисовки как в оригинальном display_chord
-            # С использованием crop_rect, elements, display_settings
+                # Проверяем границы обрезки
+                if (crop_x >= 0 and crop_y >= 0 and
+                    crop_x + crop_width <= self.original_pixmap.width() and
+                    crop_y + crop_height <= self.original_pixmap.height()):
 
-            # Временная заглушка - просто показываем оригинальное изображение
-            self.display_original_image()
+                    # Создаем обрезанное изображение
+                    cropped_pixmap = self.original_pixmap.copy(crop_x, crop_y, crop_width, crop_height)
+                    print(f"✂️  Изображение обрезано: {crop_width}x{crop_height}")
+
+                    # Рисуем элементы на обрезанном изображении
+                    result_pixmap = self.draw_elements_on_pixmap(cropped_pixmap, elements, display_settings)
+
+                else:
+                    print(f"❌ Некорректная область обрезки: {crop_rect}")
+                    result_pixmap = self.original_pixmap.copy()
+            else:
+                print("⚠️ Область обрезки не указана, используем полное изображение")
+                result_pixmap = self.original_pixmap.copy()
+
+            # Применяем масштабирование
+            final_pixmap = self.apply_scale(result_pixmap)
+            self.image_label.setPixmap(final_pixmap)
+            print(f"✅ Аккорд {chord_name} отображен: {final_pixmap.width()}x{final_pixmap.height()}")
 
         except Exception as e:
             print(f"❌ Ошибка отрисовки аккорда: {e}")
+            import traceback
+            traceback.print_exc()
+            # Показываем оригинальное изображение в случае ошибки
+            self.display_original_image()
 
-    # Остальные методы обработчиков изменений (аналогично оригинальным)
+    def draw_elements_on_pixmap(self, pixmap, elements, display_settings):
+        """Рисует элементы аккорда на pixmap"""
+        try:
+            # Создаем копию pixmap для рисования
+            result_pixmap = QPixmap(pixmap)
+            painter = QPainter(result_pixmap)
+
+            # Включаем сглаживание
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            painter.setRenderHint(QPainter.TextAntialiasing)
+
+            print(f"🎨 Отрисовка {len(elements)} элементов...")
+
+            # Рисуем элементы
+            for element in elements:
+                element_type = element.get('type')
+                element_data = element.get('data', {})
+
+                if element_type == 'fret':
+                    DrawingElements.draw_fret(painter, element_data)
+                    print(f"   🎯 Лад: {element_data.get('symbol', '?')}")
+                elif element_type == 'note':
+                    DrawingElements.draw_note(painter, element_data)
+                    print(f"   🎵 Нота: {element_data.get('finger', element_data.get('note_name', '?'))}")
+                elif element_type == 'barre':
+                    DrawingElements.draw_barre(painter, element_data)
+                    print(f"   🎸 Баре: {element_data.get('width', 0)}x{element_data.get('height', 0)}")
+                else:
+                    print(f"   ⚠️ Неизвестный тип элемента: {element_type}")
+
+            painter.end()
+            print("✅ Элементы отрисованы")
+            return result_pixmap
+
+        except Exception as e:
+            print(f"❌ Ошибка отрисовки элементов: {e}")
+            return pixmap
+
+    def apply_scale(self, pixmap):
+        """Применяет масштабирование к изображению"""
+        try:
+            if self.current_scale_type == "small1":
+                # МАЛЕНЬКИЙ 1 - авто масштаб
+                display_width = min(400, pixmap.width())
+                scale_factor = display_width / pixmap.width()
+                display_height = int(pixmap.height() * scale_factor)
+
+                scaled_pixmap = pixmap.scaled(
+                    display_width,
+                    display_height,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                print(f"📏 Маленький 1: {pixmap.width()}x{pixmap.height()} -> {display_width}x{display_height}")
+
+            elif self.current_scale_type == "small2":
+                # МАЛЕНЬКИЙ 2 - 30% от оригинального
+                display_width = int(pixmap.width() * 0.3)
+                display_height = int(pixmap.height() * 0.3)
+
+                scaled_pixmap = pixmap.scaled(
+                    display_width,
+                    display_height,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                print(f"📏 Маленький 2 (30%): {pixmap.width()}x{pixmap.height()} -> {display_width}x{display_height}")
+
+            elif self.current_scale_type == "medium1":
+                # СРЕДНИЙ 1 - 50% от оригинального
+                display_width = int(pixmap.width() * 0.5)
+                display_height = int(pixmap.height() * 0.5)
+
+                scaled_pixmap = pixmap.scaled(
+                    display_width,
+                    display_height,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                print(f"📏 Средний 1 (50%): {pixmap.width()}x{pixmap.height()} -> {display_width}x{display_height}")
+
+            elif self.current_scale_type == "medium2":
+                # СРЕДНИЙ 2 - 70% от оригинального
+                display_width = int(pixmap.width() * 0.7)
+                display_height = int(pixmap.height() * 0.7)
+
+                scaled_pixmap = pixmap.scaled(
+                    display_width,
+                    display_height,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                print(f"📏 Средний 2 (70%): {pixmap.width()}x{pixmap.height()} -> {display_width}x{display_height}")
+
+            else:
+                # ОРИГИНАЛЬНЫЙ РАЗМЕР
+                scaled_pixmap = pixmap
+                print(f"📏 Оригинальный размер: {pixmap.width()}x{pixmap.height()}")
+
+            return scaled_pixmap
+
+        except Exception as e:
+            print(f"❌ Ошибка масштабирования: {e}")
+            return pixmap
+
+    # Обработчики изменений настроек
     def on_scale_changed(self, scale_type):
         scale_map = {
             "Маленький 1": "small1",
@@ -507,16 +655,19 @@ class StandaloneChordConfigTab(QWidget):
             "Средний 2": "medium2"
         }
         self.current_scale_type = scale_map.get(scale_type, "original")
+        print(f"⚙️  Масштаб изменен: {self.current_scale_type}")
         if self.current_chord:
             self.display_chord(self.current_chord)
 
     def on_display_type_changed(self, display_type):
         self.current_display_type = "fingers" if display_type == "Пальцы" else "notes"
+        print(f"⚙️  Тип отображения изменен: {self.current_display_type}")
         if self.current_chord:
             self.display_chord(self.current_chord)
 
     def on_fret_type_changed(self, fret_type):
         self.current_fret_type = "roman" if fret_type == "Римские" else "numeric"
+        print(f"⚙️  Тип ладов изменен: {self.current_fret_type}")
         if self.current_chord:
             self.display_chord(self.current_chord)
 
@@ -528,6 +679,7 @@ class StandaloneChordConfigTab(QWidget):
             "Толстая": "thick"
         }
         self.current_barre_outline = outline_map.get(outline_type, "none")
+        print(f"⚙️  Обводка барре изменена: {self.current_barre_outline}")
         if self.current_chord:
             self.display_chord(self.current_chord)
 
@@ -539,13 +691,14 @@ class StandaloneChordConfigTab(QWidget):
             "Толстая": "thick"
         }
         self.current_note_outline = outline_map.get(outline_type, "none")
+        print(f"⚙️  Обводка нот изменена: {self.current_note_outline}")
         if self.current_chord:
             self.display_chord(self.current_chord)
 
     def on_group_changed(self, group):
         self.current_group = group
+        print(f"⚙️  Группа изменена: {group}")
         self.load_chord_buttons()
-
 
 class StandaloneMainWindow(QMainWindow):
     """Главное окно для автономного приложения"""
@@ -579,10 +732,9 @@ class StandaloneMainWindow(QMainWindow):
     def show_about(self):
         """Показывает информацию о программе"""
         QMessageBox.information(self, "О программе",
-                                "Автономное приложение аккордов\n"
-                                "Все данные хранятся в chords_data.py\n"
-                                "Версия: 2.0 (Standalone)")
-
+                               "Автономное приложение аккордов\n"
+                               "Все данные хранятся в chords_data.py\n"
+                               "Версия: 2.0 (Standalone)")
 
 def main():
     """Основная функция запуска автономного приложения"""
@@ -591,16 +743,15 @@ def main():
     # Проверяем доступность автономных данных
     if not HAS_STANDALONE_DATA:
         QMessageBox.critical(None, "Ошибка",
-                             "Файл chords_data.py не найден!\n\n"
-                             "Запустите сначала конвертер:\n"
-                             "python run_standalone_converter.py")
+                           "Файл chords_data.py не найден!\n\n"
+                           "Запустите сначала конвертер:\n"
+                           "python run_standalone_converter.py")
         return
 
     window = StandaloneMainWindow()
     window.show()
 
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()
